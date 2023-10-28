@@ -38,7 +38,7 @@ class ReplayMemory(object):
     
 ### env
 task = "Pong"
-env = GrayScaleObservation(gym.make("ALE/Pong-v5", render_mode="rgb_array"), keep_dim=True)
+env = GrayScaleObservation(gym.make("PongNoFrameskip-v4", render_mode="rgb_array"), keep_dim=True)
 env = ResizeObservation(env, 84)
 env = FrameStack(env, 4)
 print(env.observation_space)
@@ -99,13 +99,13 @@ class DQN(nn.Module):
 # EPS_DECAY controls the rate of exponential decay of epsilon, higher means a slower decay
 # TAU is the update rate of the target network
 # LR is the learning rate of the ``AdamW`` optimizer
-BATCH_SIZE = 256
+BATCH_SIZE = 128
 GAMMA = 0.99
 EPS_START = 0.9
 EPS_END = 0.05
-EPS_DECAY = 100000
+EPS_DECAY = 500000
 TAU = 0.005
-LR = 1e-5
+LR = 5e-4
 SEED = 525
 
 torch.manual_seed(seed=SEED)
@@ -225,7 +225,7 @@ def optimize_model():
     optimizer.step()
     
 if torch.cuda.is_available():
-    num_episodes = 1000
+    num_episodes = 10000
     # num_episodes = 1
 else:
     num_episodes = 50
@@ -234,6 +234,9 @@ else:
 
 
 all_total_rewards = []
+
+rl_result = []
+
 for i_episode in range(1, 1+num_episodes):
     # Initialize the environment and get it's state
     state, info = env.reset(seed=SEED+i_episode)
@@ -244,20 +247,23 @@ for i_episode in range(1, 1+num_episodes):
     # print(state.shape, "\n")
     
     
-    total_reward = 0
-
-    # print(state.shape)
-    start = time.time()
-    
+    # init  
+    total_reward = 0.0
     env_times_all = 0
     model_times_all = 0
+    
+    episode_start = time.time()
     
     for t in count():
         env_start = time.time()
         action = select_action(state) 
+        
         observation, reward, terminated, truncated, _ = env.step(action.item())
-        reward = torch.tensor([reward], device=device)
         done = terminated or truncated
+        
+        total_reward += reward
+        
+        reward = torch.tensor([reward], device=device)
 
         if terminated:
             next_state = None
@@ -266,7 +272,6 @@ for i_episode in range(1, 1+num_episodes):
             next_state = torch.tensor(np.array(observation), dtype=torch.float32, device=device).view(1, 4, 84, -1)
             
             
-        total_reward += reward
 
         # Store the transition in memory
         memory.push(state, action, next_state, reward)
@@ -293,18 +298,25 @@ for i_episode in range(1, 1+num_episodes):
         
         
         if done:
-            end = time.time()
+            episode_end = time.time()                
+            one_episode_time = episode_end - episode_start
             
-            episode_durations.append(t + 1)
-            all_total_rewards.append(total_reward)
-            # plot_durations()
-            print(f"episode: {i_episode} \tdurations: {t}\t\trewards: {total_reward.item()} \ttimes: {round(end-start, 2)}")
-            print(f"times: {round(end-start, 2)}, env: {round(env_times_all, 2), round(env_times_all/(end-start), 2)}, model:{round(model_times_all, 2), round(model_times_all/(end-start), 2)}")
+            rl_result.append([episode, t, total_reward, one_episode_time, env_times_all, model_times_all, steps_done])
             break
         
     if i_episode % 50 == 0:
         torch.save(target_net, f"./checkpoint/e/DQN_{task}_{i_episode}_{int(sum(all_total_rewards[-10:])/10)}.pt")
         torch.save(target_net.state_dict(), f"./checkpoint/e/DQN_{task}_{i_episode}_{int(sum(all_total_rewards[-10:])/10)}_state_dict.pt")
         print(f"{i_episode},  save model, reward:{int(sum(all_total_rewards[-10:])/10)}")
+        
+        print('Total steps: {} \t Episode: {}/{} \t Total reward: {}'.format(steps_done, episode, t, total_reward))
+        
+        df = pd.DataFrame(rl_result)
+        df.columns = ["episode", "t", "total_reward", "one_episode_time", "env_times_all", "model_times_all", "steps_done"]
+        excel_path = f"./output/DQN_{task}_result.xlsx"
+        df.to_excel(excel_path, index=False)
+        print("excel saved!")
+        print("---"*10)
+        
 
 print('Complete')
